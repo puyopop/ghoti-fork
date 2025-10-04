@@ -1,5 +1,5 @@
 <div align="center">
-    <b>Note: このリポジトリはアーカイブされています。 今後の開発は <a href="https://github.com/morioprog/nova">morioprog/nova</a> にて行います</b>:bow:
+    <b>Note: このリポジトリは <a href="https://github.com/morioprog/ghoti">morioprog/ghoti</a> のフォークです</b>:bow:
 </div>
 
 ---
@@ -8,7 +8,7 @@
     ghoti
 </h1>
 
-[![Rust](https://github.com/morioprog/ghoti/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/morioprog/ghoti/actions/workflows/rust.yml)
+[![Rust](https://github.com/puyopop/ghoti-fork/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/puyopop/ghoti-fork/actions/workflows/rust.yml)
 
 ```sh
 # とこぷよ

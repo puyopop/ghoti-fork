@@ -1,0 +1,180 @@
+{
+  "title": "ぷよぷよAI/シミュレーター 完全ガイド",
+  "steps": [
+    {
+      "file": "simulator/src/bin/cli_1p.rs",
+      "pattern": "fn main\\(\\) -&gt; Result",
+      "description": "**【エントリポイント】1人プレイシミュレーターのmain関数**\n\nこのCLIツールが1人プレイ（とこぷよ）のシミュレーション全体を制御します。\n\n**実行方法:**\n```sh\ncargo run --release -p ghoti-simulator --bin cli_1p\n```\n\n**重要な引数:**\n- `--ai`: AI名（BeamSearchAI or RandomAI）\n- `--visible_tumos`: AIに何手先まで見せるか（デフォルト2手）\n- `--max_tumos`: 最大何手までシミュレートするか\n- `--haipuyo_margin`: 配ぷよ番号（指定しないとランダム）\n\n**Rust豆知識:** `Result<(), std::io::Error>` はエラーハンドリングのための型。`?` 演算子でエラーを伝播できます。",
+      "title": "1. エントリポイント"
+    },
+    {
+      "file": "simulator/src/bin/cli_1p.rs",
+      "pattern": "let ais: Vec&lt;Box&lt;dyn AI&gt;&gt;",
+      "description": "**【AI選択】利用可能なAIの登録**\n\nここで使えるAIを登録しています。現在は:\n- **BeamSearchAI**: ビームサーチで強い手を探す本格AI\n- **RandomAI**: ランダムに手を選ぶテスト用AI\n\n**オリジナルAIを追加する場合:**\n1. `cpu/src/bot/` に新しいファイルを作成\n2. `AI` トレイトを実装\n3. ここに `Box::new(YourAI::new())` を追加\n\n**Rust豆知識:** `Box<dyn AI>` は動的ディスパッチ。異なる型のAIを同じVecに入れられます（C++の仮想関数のような仕組み）。`dyn` はトレイトオブジェクトを示すキーワード。",
+      "title": "2. AI選択"
+    },
+    {
+      "file": "simulator/src/bin/cli_1p.rs",
+      "pattern": "let simulate_result_1p = simulate_1p\\(",
+      "description": "**【シミュレーション実行】メインのシミュレーションループを呼び出し**\n\n`simulate_1p` 関数がゲーム全体を管理します。この関数は:\n- AIに盤面を見せて思考させる\n- 決定した手を実行\n- 連鎖をシミュレート\n- 結果を記録\n\n戻り値の `SimulateResult1P` にはスコア、各手の詳細、リプレイURLなどが含まれます。\n\n次のステップでこの関数の中身を見ていきましょう。",
+      "title": "3. シミュレーション実行"
+    },
+    {
+      "file": "simulator/src/simulate_1p.rs",
+      "pattern": "pub fn simulate_1p\\(",
+      "description": "**【シミュレーションループ】1人プレイの核となる処理**\n\nこの関数がとこぷよの全体フローを制御します:\n\n**引数:**\n- `logger`: ログ出力用\n- `ai`: 思考を担当するAI\n- `visible_tumos`: AIに見せるツモ数（先読み深さ）\n- `max_tumos`: 最大手数\n- `haipuyo_margin`: 配ぷよ指定（Noneならランダム）\n- `required_chain_score`: この得点以上の連鎖で終了\n\n**配ぷよシステム:**\n配ぷよは16,777,216通りの固定パターンが存在し、`HaipuyoDetector` が管理しています。",
+      "title": "4. シミュレーションループ"
+    },
+    {
+      "file": "simulator/src/simulate_1p.rs",
+      "pattern": "for tumo_index in 1\\.\\.=max_tumos",
+      "description": "**【メインループ】各ツモごとの処理**\n\nこのループが1手ずつ進行します:\n\n1. `player_state.set_seq(visible_tumos)` - AIに見せるツモを設定\n2. `ai.think(...)` - **AIの思考** ← ここが重要！\n3. `player_state.drop_kumipuyo(...)` - ぷよを落とす\n4. `player_state.field.simulate()` - 連鎖をシミュレート\n5. ログ出力、終了判定\n\n**次のステップ:** AIの思考メソッドの中身を見ていきます。",
+      "title": "5. メインループ"
+    },
+    {
+      "file": "cpu/src/bot/ai.rs",
+      "pattern": "pub trait AI \\{",
+      "description": "**【AIトレイト】すべてのAIが実装すべきインターフェース**\n\nこのトレイトを実装すれば、オリジナルAIを作れます！\n\n**必須メソッド:**\n- `new()`: AIのインスタンスを生成\n- `name()`: AI名を返す\n- `think()`: **最重要！** 盤面を見て次の手を決定\n\n**オリジナルAIの作り方:**\n```rust\npub struct MyAI { /* フィールド */ }\n\nimpl AI for MyAI {\n    fn new() -> Self { MyAI { /* 初期化 */ } }\n    fn name(&self) -> &'static str { \"MyAI\" }\n    fn think(&self, player_state_1p: PlayerState, ...) -> AIDecision {\n        // ここで思考ロジックを実装\n    }\n}\n```\n\n**Rust豆知識:** トレイトはJavaのinterfaceに相当。`where Self: Sized` は型サイズが既知である必要があることを示します。",
+      "title": "6. AIトレイト定義"
+    },
+    {
+      "file": "cpu/src/bot/ai.rs",
+      "pattern": "pub struct PlayerState \\{",
+      "description": "**【プレイヤー状態】AIに渡される盤面情報**\n\nAIはこの構造体から現在の状況を把握します:\n\n**主要フィールド:**\n- `frame`: 試合開始からのフレーム数（60fps）\n- `field`: 現在の盤面（CoreField型）← 最重要！\n- `seq`: 見えているツモ列（Kumipuyo の Vec）\n- `score`: 現在の得点\n- `fixed_ojama` / `pending_ojama`: 確定/予告おじゃまぷよ\n- `current_chain`: 現在の連鎖数（連鎖中なら1以上）\n- `tumo_index`: 何手目か\n\n**重要メソッド:**\n- `drop_kumipuyo(&mut self, decision)`: 指定した手でぷよを配置\n\n**Rust豆知識:** `#[derive(Clone)]` でCloneトレイトを自動実装。これがないと値のコピーができません。",
+      "title": "7. PlayerState"
+    },
+    {
+      "file": "cpu/src/bot/ai.rs",
+      "pattern": "pub struct AIDecision \\{",
+      "description": "**【AI決定】AIが返すべき構造体**\n\nAIの `think()` メソッドはこの構造体を返します:\n\n**フィールド:**\n- `decisions`: 決定した手のリスト（通常は1手だけ）\n- `log_output`: デバッグ用の文字列（評価値など）\n- `elapsed`: 思考にかかった時間\n\n**Decision型:**\n各決定は `(axis_x, rot)` のペアで表現:\n- `axis_x`: 軸ぷよのx座標（1-6）\n- `rot`: 回転（0=上, 1=右, 2=下, 3=左）\n\n**シンプルなAIの例:**\n```rust\nfn think(&self, state: PlayerState, ...) -> AIDecision {\n    let decision = Decision::new(3, 0); // 3列目に縦置き\n    AIDecision::from_decision(&decision, \"simple\".into(), elapsed)\n}\n```",
+      "title": "8. AIDecision"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "pub struct BeamSearchAI \\{",
+      "description": "**【BeamSearchAI】本格的なAIの実装例**\n\nこのプロジェクトのメインAIです。2つの重要なコンポーネント:\n\n1. **`evaluator: Evaluator`**\n   - 盤面の良さを数値化（評価関数）\n   - 50個以上のパラメータで細かく調整\n   - 形・連結・連鎖可能性などを評価\n\n2. **`opening_matcher: OpeningMatcher`**\n   - 序盤5手までのテンプレート\n   - 定石を使って序盤を高速化\n\n**次のステップ:** ビームサーチの仕組みを見ていきます。",
+      "title": "9. BeamSearchAI構造"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "fn think\\(",
+      "description": "**【think実装】AIトレイトの実装**\n\nBeamSearchAIの思考プロセス:\n\n**1. パラメータ調整（54-60行目）:**\nフレーム（残り時間的な概念）に応じてビームサーチのパラメータを変更:\n- 序盤（~2F）: depth=20, width=20（軽量）\n- 中盤（~8F）: depth=30, width=60（標準）\n- 終盤（9F~）: depth=40, width=140（重量）\n\n**depth**: 何手先まで読むか\n**width**: 各深さで何通りの盤面を保持するか\n\n**2. `think_internal` 呼び出し:**\n実際の探索ロジックはここで実行されます。\n\n**Rust豆知識:** `unwrap_or(0)` はOption型の値を取り出し、Noneなら0を返します。",
+      "title": "10. think実装"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "fn think_internal\\(",
+      "description": "**【think_internal】ビームサーチの本体**\n\nこの関数が探索全体を制御します。処理の流れ:\n\n1. **序盤テンプレート判定（77-89行目）**\n2. **相手の連鎖状況解析（92-118行目）** - 2P対戦用\n3. **発火条件の定義（122-270行目）** ← 超重要！\n4. **並列探索（272-302行目）** - モンテカルロ的な並列化\n5. **結果の多数決（304-328行目）**\n\n**並列化の理由:**\nツモが足りない時はランダムツモで補完するため、複数回試行して最頻の手を選びます。\n\n**次:** 発火条件（いつ連鎖を打つか）のロジックを見ます。",
+      "title": "11. think_internal概要"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "let fire_condition = move \\|state: &amp;State",
+      "description": "**【発火条件】いつ連鎖を打つべきか**\n\nこの巨大なクロージャが「発火すべきか」を判定します。\n\n**主な発火条件:**\n1. **序盤全消し**（126-129行目）: 12秒以内で3連鎖以下の全消し\n2. **凝視判定**（132-266行目）: 相手の状況を見て判断\n   - 相手の連鎖に割り込めるか\n   - 潰し（相手が平らな時に攻撃）\n   - 相殺（おじゃまを軽減）\n   - 先打ち（本線の打ち合い）\n3. **飽和**（269行目）: 8万点以上なら打つ\n\n**Rust豆知識:** `move |args| { ... }` はムーブクロージャ。外側の変数の所有権を奪います。これにより他スレッドに安全に渡せます。",
+      "title": "12. 発火条件"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "thread::spawn\\(move \\|\\| \\{",
+      "description": "**【並列探索】複数スレッドで同時に探索**\n\nモンテカルロ的アプローチ:\n- `parallel` 個のスレッドを起動（通常20個）\n- 各スレッドは独立してビームサーチ実行\n- 結果を `mpsc::channel` で集約\n\n**なぜ並列化？**\n見えないツモをランダム生成で補完するため、複数回試行して安定した手を選びます。\n\n**Rust豆知識:** \n- `thread::spawn` でOSスレッドを生成\n- `mpsc::channel()` は Multiple Producer, Single Consumer チャネル\n- Rustの所有権システムにより、データ競合がコンパイル時に検出されます！\n\n変数名の `_c` サフィックスはクローンを示す慣習です。",
+      "title": "13. 並列探索"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "fn think_single_thread",
+      "description": "**【単一スレッド探索】ビームサーチのコア実装**\n\n1つのスレッドが実行する探索処理。これが本物のビームサーチです！\n\n**アルゴリズム:**\n1. ツモ列を準備（足りなければランダム生成で補完）\n2. 初期状態から開始\n3. 各深さで:\n   - 全ての合法手を生成\n   - 評価関数でスコアリング\n   - 上位 `width` 個だけ残す（ビームの枝刈り）\n4. 発火可能な手があれば即座に返す\n5. なければ評価値最大の手を返す\n\n**次:** ビームサーチの状態表現を見ます。",
+      "title": "14. 単一スレッド探索"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "#\\[derive\\(Clone\\)\\]\\nstruct State \\{",
+      "description": "**【State構造体】ビームサーチの探索状態**\n\nビーム内で保持する各盤面の情報:\n\n**フィールド:**\n- `field: CoreField` - 盤面\n- `decisions: Vec<Decision>` - ここまでの手順\n- `eval_score: i32` - 評価値（重要！）\n- `plan: Option<Plan>` - 連鎖計画（発火時のみ）\n- `frame_control` - 操作にかかるフレーム数\n- `frame_chain` - 連鎖完了までのフレーム数\n\n**評価値について:**\n`eval_score` が大きいほど良い盤面。Evaluatorが計算します。\n\n**Rust豆知識:** `Option<Plan>` は値があるかもしれない型。`None` か `Some(値)` のどちらか。NullPointerExceptionが起きません！",
+      "title": "15. State構造体"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "for depth in 0\\.\\.depth \\{",
+      "description": "**【ビームサーチループ】深さ優先で状態を展開**\n\nビームサーチの心臓部！\n\n**処理:**\n1. **早期終了判定（500-507行目）**: ビーム内の全ての初手が同じなら、これ以上探索不要\n2. **次状態生成（509-521行目）**: 各状態から全合法手を試す\n3. **ソート（527-528行目）**: 評価値の降順でソート\n4. **枝刈り（529-531行目）**: 上位 `width` 個だけ残す ← **これがビーム！**\n\n**計算量:**\n- 各深さで最大 `width × 22手（全合法手）` の状態を評価\n- これを `depth` 回繰り返す\n- 合計: O(depth × width × 22)\n\n**競プロ的補足:** 動的計画法的な枝刈り探索。全探索はO(22^depth)なので、ビームサーチで劇的に削減。",
+      "title": "16. ビームサーチループ"
+    },
+    {
+      "file": "cpu/src/bot/beam_search_ai/beam_search_ai.rs",
+      "pattern": "fn generate_next_states\\(",
+      "description": "**【状態展開】1つの状態から次の全状態を生成**\n\n現在の盤面から、次のツモで打てる全ての手を試します。\n\n**引数:**\n- `cur_state`: 現在の状態\n- `next_states`: 通常の次状態を追加するVec\n- `fired`: 発火した状態を追加するVec\n- `kumipuyo`: 次のツモ\n- `append_fired`: 発火候補も記録するか\n- `evaluator`: 評価関数\n\n**Plan::iterate_available_plans:**\n指定したツモで打てる全ての合法手を列挙し、コールバックで処理します。内部で連鎖シミュレーションも実行。\n\n**重要:** 発火する手（chain > 0）と通常の手を分けて管理しています。",
+      "title": "17. 状態展開"
+    },
+    {
+      "file": "cpu/src/evaluator/evaluator.rs",
+      "pattern": "pub struct Evaluator \\{",
+      "description": "**【評価関数】盤面の良さを数値化する核心部分**\n\n50個以上のパラメータで盤面を多角的に評価！\n\n**カテゴリ:**\n\n**1. 盤面形状（16-27行目）:**\n- `valley`: 谷の深さ（マイナス評価）\n- `ridge`: 尾根の高さ（マイナス）\n- `ideal_height_diff`: 理想形からのズレ\n- `third_column_height`: 3列目の高さ（階段積みで重要）\n\n**2. 連結（29-30行目）:**\n- `connectivity_2`, `connectivity_3`: 2個/3個連結の数\n\n**3. 連鎖（32-44行目）:**\n- `potential_main_chain`: 本線の連鎖数予測\n- `potential_sub_chain`: 副砲の連鎖数予測\n\n**4. パターンマッチ（48-87行目）:**\n- GTR系の形を検出してボーナス\n\n**次:** 実際の評価計算を見ます。",
+      "title": "18. Evaluator構造体"
+    },
+    {
+      "file": "cpu/src/evaluator/evaluator.rs",
+      "pattern": "pub fn evaluate\\(&amp;self, plan: &amp;Plan\\) -&gt; i32 \\{",
+      "description": "**【評価関数実装】盤面をスコアリング**\n\nこの関数が返す `i32` の値が大きいほど良い盤面です。\n\n**計算方法:**\n各特徴量にパラメータを掛けて合算する線形モデル:\n```\nscore = Σ (parameter_i × feature_i)\n```\n\n**例（210-212行目）:**\n```rust\nscore += self.valley * cf.valley_depth(x) as i32;\nscore += self.ridge * cf.ridge_height(x) as i32;\n```\n\n谷が深いと `valley`（負の値）が掛かってスコア減少。\n\n**死亡判定（202-204行目）:**\n盤面が死んでいたら最低評価を返す。\n\n**パラメータチューニング:**\n`optimizer` クレートで遺伝的アルゴリズムによる最適化が可能！",
+      "title": "19. 評価関数実装"
+    },
+    {
+      "file": "cpu/src/evaluator/evaluator.rs",
+      "pattern": "fn detect_chains\\(cf: &amp;CoreField\\)",
+      "description": "**【連鎖検出】盤面から打てる連鎖を探す**\n\n現在の盤面に1-2個ぷよを補完して発火できる連鎖を検出します。\n\n**アルゴリズム:**\n1. `detect_by_drop` で補完候補を列挙\n2. 各候補で連鎖シミュレーション\n3. 5000点以上 → 本線、70-4999点 → 副砲\n4. 効率（score/frame）が最良のものを選択\n\n**戻り値:**\n```rust\n(Option<(RensaResult, usize)>, Option<(RensaResult, usize)>)\n ^本線                         ^副砲\n```\n\n各タプルは `(連鎖結果, 発火点の高さ)` \n\n**detect_by_drop:**\npuyoai-coreライブラリの関数。全列の全高さに補完を試みる総当たり検索。",
+      "title": "20. 連鎖検出"
+    },
+    {
+      "file": "puyoai/src/es_field/es_bit_field.rs",
+      "pattern": "pub trait EsBitField \\{",
+      "description": "**【ES拡張】Esports用の高速シミュレーション**\n\n`puyoai-core` の標準実装に、Esports仕様の拡張を追加したトレイトです。\n\n**ES (Esports) とは？**\n競技用ぷよぷよのフレーム計算ルール。通常版とは落下速度やボーナスが異なります。\n\n**主要メソッド:**\n- `es_simulate()`: 連鎖を最初から最後まで実行\n- `es_simulate_from_middle(chain)`: 途中の連鎖数から再開（2P対戦で相手の連鎖中に使用）\n\n**実装条件（21行目）:**\n```rust\n#[cfg(all(target_feature = \"avx2\", target_feature = \"bmi2\"))]\n```\nAVX2とBMI2命令セットが必要！これらはSIMD命令で高速化に使われます。\n\n**Rust豆知識:** トレイトで既存の型に機能を追加できます（拡張メソッド的）。",
+      "title": "21. ES拡張トレイト"
+    },
+    {
+      "file": "puyoai/src/es_field/es_bit_field.rs",
+      "pattern": "loop \\{",
+      "description": "**【連鎖シミュレーションループ】連鎖の逐次実行**\n\n連鎖の各段階を1つずつ計算します。\n\n**処理フロー:**\n1. **消去判定（50-54行目）**: `self.vanish()` で消えるぷよを検出し、得点計算\n   - 消えるものがなければループ終了\n2. **得点加算（56-57行目）**\n3. **落下処理（59-63行目）**: `drop_after_vanish()` でぷよを落とす\n   - `max_drops`: 最大落下距離\n   - `es_frame::FRAMES_CHAIN[max_drops]`: 落下にかかるフレーム数\n4. **クイック判定**: `max_drops == 0` なら同時消し（クイック）\n\n**戻り値（67行目）:**\n`RensaResult::new(連鎖数, 得点, フレーム数, クイック)`\n\n**AVX2の恩恵:** `vanish()` や `drop_after_vanish()` 内部でビット演算が並列実行されます！",
+      "title": "22. 連鎖シミュレーション"
+    },
+    {
+      "file": "puyoai/src/lib.rs",
+      "pattern": "pub use puyoai_core::\\*;",
+      "description": "**【puyoaiクレート】コアライブラリの再エクスポート**\n\nこのクレートは `puyoai-core` の薄いラッパーです。\n\n**提供する機能:**\n- `puyoai_core::*` の全ての型とトレイト\n- ES拡張（`es_field`, `es_frame`）\n- プラン（`plan`）\n- シリアライズ定義（`serde_def`）\n\n**主要な型（puyoai-coreから）:**\n- `CoreField`: 盤面の実体\n- `BitField`: ビット演算ベースの高速実装\n- `Kumipuyo`: ツモ（2個セット）\n- `Decision`: 手の表現\n- `Color`: ぷよの色\n\n**呼び出し方:**\n```rust\nuse puyoai::{field::CoreField, decision::Decision};\n```\n\n**Rust豆知識:** `#![feature(let_chains)]` はnightly限定機能。if文で複数の条件を `&&` で繋げられます。",
+      "title": "23. puyoaiクレート"
+    },
+    {
+      "file": "simulator/src/simulate_1p.rs",
+      "pattern": "pub struct SimulateResult1P \\{",
+      "description": "**【結果出力】シミュレーション結果の保存**\n\nシミュレーション結果をJSON形式で保存するための構造体。\n\n**フィールド:**\n- `date`: 実行日時\n- `score`: 最終得点\n- `visible_tumos`: AI読み手数\n- `tumos`: ツモ列（[\"RR\", \"YG\", ...]形式）\n- `json_decisions`: 各手の詳細（思考時間、ログ、決定）\n- `url`: ぷよぷよシミュレータ（puyop.com）のリプレイURL\n\n**export_json メソッド（137-151行目）:**\n`kifus/simulator_1p/PR番号_AI名/` にJSON保存。Next.jsフロントエンドが読み込んでリプレイ再生します。\n\n**Rust豆知識:** `#[derive(Serialize, Deserialize)]` でserdeによるJSON変換が自動実装されます。`#[serde_as]` は複雑な型の変換をカスタマイズ。",
+      "title": "24. 結果出力"
+    },
+    {
+      "file": "cpu/src/evaluator/detect_shape.rs",
+      "pattern": "macro_rules! detect_shape \\{",
+      "description": "**【パターンマッチング】形を検出するマクロ**\n\n評価関数で使う形検出のマクロです。GTRなどの定石パターンを検出してボーナス点を与えます。\n\n**使用例（73-77行目）:**\n```rust\ndetect_shape! {\n    gtr_base_1\n    [A A _ _ _ _]\n}\n```\n\nこれは「1列目にAA（同色2個）がある形」を検出する関数 `gtr_base_1()` を生成します。\n\n**マクロの仕組み:**\n- `A`, `B`, `C` などは同じ色のグループ\n- `_` は何でもOK\n- 実際の色は実行時に判定\n\n**Rust豆知識:** `macro_rules!` は宣言的マクロ。コンパイル時にコードを展開します。C++のtemplateより強力で、構文木レベルで操作可能。この例では再帰的にパターン長を計算（70行目）しています。",
+      "title": "25. パターンマッチングマクロ"
+    },
+    {
+      "file": "simulator/src/simulate_2p.rs",
+      "pattern": "pub fn simulate_2p\\(",
+      "description": "**【2P対戦】本格的な対戦シミュレーション**\n\n2人のAIを対戦させる関数。1P版より複雑です！\n\n**追加要素:**\n1. **イベント駆動（74-78行目）:** `BinaryHeap` でフレーム順にイベント処理\n2. **おじゃまぷよ計算（29行目）:** 70点で1個\n3. **凝視:** 相手の盤面と連鎖状況を見て発火判定\n\n**実行方法:**\n```sh\ncargo run --release -p ghoti-simulator --bin cli_2p\n```\n\n**BinaryHeapの役割:**\n優先度付きキュー。フレーム数が小さいイベントから処理します。これにより、両プレイヤーの行動を時系列順に正確にシミュレート。\n\n**競プロ的補足:** 典型的なイベントシミュレーション。AtCoderでよくあるパターンです。",
+      "title": "26. 2P対戦シミュレーション"
+    },
+    {
+      "file": ".tours/EXAMPLE_SIMPLE_AI.md",
+      "pattern": "# シンプルなAIの実装例",
+      "description": "**【実装ガイド】オリジナルAIの作り方**\n\nこのファイルに3つの実装例を用意しました：\n\n**例1: SimpleAI**\n常に3列目に置くだけのシンプルなAI。AIトレイトの最小実装を示します。\n\n**例2: AvoidHighAI**\n最も低い列を探して置くAI。盤面の高さを読み取る例。\n\n**例3: カスタム評価関数**\nBeamSearchAIの評価パラメータだけを変更する方法。\n\n**登録の流れ:**\n1. ファイル作成（`cpu/src/bot/your_ai.rs`）\n2. `cpu/src/bot.rs` でモジュール宣言\n3. `cli_1p.rs` の `ais` Vecに追加\n4. `--ai YourAI` で実行\n\n**次のステップ:** よく使うメソッドの一覧も記載しています。",
+      "title": "27. AI実装ガイド"
+    },
+    {
+      "file": ".tours/USAGE_GUIDE.md",
+      "pattern": "# シミュレーター使用ガイド",
+      "description": "**【使用方法】シミュレーターの実践ガイド**\n\nこのファイルに実用的な情報をまとめました：\n\n**含まれる内容:**\n1. **コマンドライン引数の全パターン**\n   - 手数指定、AI読み深さ、配ぷよ固定など\n\n2. **ログの読み方**\n   - 各列が何を意味するか\n\n3. **Rust特有の注意点**\n   - nightly toolchain\n   - AVX2/BMI2命令セット\n   - ビルド時間の短縮\n\n4. **デバッグ方法**\n   - ログファイルの場所\n   - puyop.comでの視覚確認\n   - 再現可能なテスト\n\n5. **トラブルシューティング**\n   - よくあるエラーと解決法\n\n**シミュレーター拝借時:** このガイドの「基本的な使い方」セクションを参照。\n**AI開発時:** 「デバッグのヒント」と「評価関数のチューニング」が役立ちます。",
+      "title": "28. 使用方法ガイド"
+    },
+    {
+      "file": ".tours/ARCHITECTURE_OVERVIEW.md",
+      "pattern": "# アーキテクチャ概要",
+      "description": "**【全体像】プロジェクト構造の俯瞰**\n\nこのファイルでプロジェクト全体を俯瞰できます：\n\n**含まれる図表:**\n1. **クレート構成** - 5つのクレートの役割\n2. **データフロー** - 1Pモードの全処理フロー\n3. **型の関係** - 主要な構造体の依存関係\n4. **ビームサーチ詳細** - アルゴリズムの可視化\n5. **評価関数の構造** - 50項目の計算内訳\n6. **並列化の仕組み** - 20スレッドの動作\n7. **発火判定ロジック** - いつ連鎖を打つか\n8. **ES仕様** - 通常版との違い\n9. **puyoai-coreとの関係** - ライブラリ構成\n10. **パフォーマンス最適化** - 高速化のポイント\n11. **競プロ的観点** - 使われているアルゴリズム\n\n**推奨読み順:**\n初心者: クレート構成 → データフロー → 型の関係\n中級者: ビームサーチ詳細 → 評価関数 → 発火判定\n上級者: パフォーマンス最適化 → 競プロ的観点",
+      "title": "29. アーキテクチャ俯瞰"
+    }
+  ],
+  "description": "ぷよぷよAIの実装とシミュレーターの使用方法を理解するための包括的なツアー。AIの作成方法、評価関数、ビームサーチの実装などを段階的に解説します。"
+}

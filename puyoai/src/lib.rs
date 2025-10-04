@@ -1,3 +1,4 @@
+#![feature(let_chains)]
 pub use puyoai_core::*;
 
 pub mod es_field;

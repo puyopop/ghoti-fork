@@ -219,7 +219,7 @@ const TrialDetail: NextPage<StaticProps> = ({ infos, games }) => {
             <code className={styles.linkname}>1p</code>
           </a>
           {' > '}
-          <a href={`https://github.com/morioprog/ghoti/pull/${pr_number}`}>
+          <a href={`https://github.com/puyopop/ghoti-fork/pull/${pr_number}`}>
             <code
               className={styles.linkname}
             >{`#${pr_number}: ${ai_name}`}</code>

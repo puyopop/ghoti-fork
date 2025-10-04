@@ -63,8 +63,10 @@ pub fn simulate_1p(
         ))?;
 
         // `required_chain_score` の得点以上の連鎖が打たれた
-        if let Some(score) = required_chain_score && score <= rensa_result.score {
-            break;
+        if let Some(score) = required_chain_score {
+            if score <= rensa_result.score {
+                break;
+            }
         }
 
         // 死んだ

@@ -140,7 +140,7 @@ const MatchDetail: NextPage<StaticProps> = ({ infos, json_data }) => {
             <code className={styles_1p.linkname}>2p</code>
           </a>
           {' > '}
-          <a href={`https://github.com/morioprog/ghoti/pull/${pr_number}`}>
+          <a href={`https://github.com/puyopop/ghoti-fork/pull/${pr_number}`}>
             <code
               className={styles_1p.linkname}
             >{`#${pr_number}: ${ai_name_1p} vs ${ai_name_2p}`}</code>
