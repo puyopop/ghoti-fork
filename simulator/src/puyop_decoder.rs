@@ -215,6 +215,74 @@ impl PuyopDecoder {
             _ => PuyoColor::EMPTY,
         }
     }
+
+    /// フィールドをpuyop.com URLにエンコード
+    pub fn encode_field(&self, field: &CoreField) -> String {
+        let mut encoded = String::new();
+
+        // 最上段から最初の非空行を探す
+        let mut start_y = 13;
+        let mut found_non_empty = false;
+
+        for y in (1..=13).rev() {
+            let mut is_empty_row = true;
+            for x in 1..=6 {
+                if field.color(x, y) != PuyoColor::EMPTY {
+                    is_empty_row = false;
+                    break;
+                }
+            }
+            if !is_empty_row {
+                start_y = y;
+                found_non_empty = true;
+                break;
+            }
+        }
+
+        if !found_non_empty {
+            // 空のフィールド
+            return String::new();
+        }
+
+        // start_yから下へエンコード
+        for y in (1..=start_y).rev() {
+            // 各行の3つのペアをエンコード
+            for px in [1, 3, 5] {
+                let left_color = field.color(px, y);
+                let right_color = field.color(px + 1, y);
+
+                let left_id = Self::color_to_field_id(left_color);
+                let right_id = Self::color_to_field_id(right_color);
+
+                let d = left_id * 8 + right_id;
+                encoded.push(Self::ENCODER[d]);
+            }
+        }
+
+        encoded
+    }
+
+    fn color_to_field_id(color: PuyoColor) -> usize {
+        match color {
+            PuyoColor::EMPTY => 0,
+            PuyoColor::RED => 1,
+            PuyoColor::GREEN => 2,
+            PuyoColor::BLUE => 3,
+            PuyoColor::YELLOW => 4,
+            PuyoColor::OJAMA => 6,
+            _ => 0,
+        }
+    }
+
+    /// フィールドからpuyop.com完全URLを生成
+    pub fn field_to_puyop_url(&self, field: &CoreField) -> String {
+        let encoded = self.encode_field(field);
+        if encoded.is_empty() {
+            "https://puyop.com/s/".to_string()
+        } else {
+            format!("https://puyop.com/s/{}", encoded)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ use puyoai::{
 };
 
 use ghoti_simulator::haipuyo_detector::*;
+use ghoti_simulator::puyop_decoder::PuyopDecoder;
 
 use crossterm::{
     cursor,
@@ -67,11 +68,19 @@ struct ChainAnimation {
 }
 
 fn main() -> Result<(), std::io::Error> {
+    // コマンドライン引数をチェック
+    let args: Vec<String> = std::env::args().collect();
+    let initial_url = if args.len() > 1 {
+        Some(args[1].clone())
+    } else {
+        None
+    };
+
     // ターミナルをrawモードに設定
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
 
-    let result = run_game(&mut stdout);
+    let result = run_game(&mut stdout, initial_url);
 
     // rawモードを解除
     terminal::disable_raw_mode()?;
@@ -81,7 +90,7 @@ fn main() -> Result<(), std::io::Error> {
     result
 }
 
-fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
+fn run_game(stdout: &mut io::Stdout, initial_url: Option<String>) -> Result<(), std::io::Error> {
     stdout.execute(terminal::Clear(ClearType::All))?;
     stdout.execute(cursor::MoveTo(0, 0))?;
 
@@ -94,6 +103,13 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
     println!("  u         : Undo last move\r");
     println!("  q         : Exit game\r");
     println!("\r");
+
+    // 初期URLから盤面を読み込む場合の表示
+    if let Some(ref url) = initial_url {
+        println!("Loading field from: {}\r", url);
+        println!("\r");
+    }
+
     println!("Press any key to start...\r");
     stdout.flush()?;
 
@@ -106,12 +122,30 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
 
     let ai = BeamSearchAI::new();
     let visible_tumos = 3; // 現在手・次手・次々手
+    let decoder = PuyopDecoder::new();
 
-    // ランダムな配ぷよを生成
+    // 初期状態を設定
     let seq = HaipuyoDetector::random_haipuyo();
     let mut player_state = PlayerState::initial_state(vec![], Some(seq.clone()));
-    let mut score = 0;
-    let mut tumo_index = 0;
+
+    // URLが指定されている場合は盤面を読み込む
+    if let Some(url) = initial_url {
+        match decoder.decode_url(&url) {
+            Ok((field, _, _)) => {
+                player_state.field = field;
+            }
+            Err(e) => {
+                println!("Failed to decode URL: {}\r", e);
+                println!("Using empty field instead.\r");
+                println!("Press any key to continue...\r");
+                stdout.flush()?;
+                event::read()?;
+            }
+        }
+    }
+
+    let mut score = player_state.score;
+    let mut tumo_index = player_state.tumo_index;
 
     // Undo履歴を初期化
     let mut history = GameHistory::new(50);
@@ -293,6 +327,12 @@ fn display_game_state_with_cursor_and_suggestions(
 ) {
     println!("\r\n{}\r", "=".repeat(60));
     println!("Turn: {}  Score: {}\r", tumo_index + 1, score);
+    println!("{}\r", "=".repeat(60));
+
+    // 現在の盤面のpuyop.com URLを生成
+    let decoder = PuyopDecoder::new();
+    let puyop_url = decoder.field_to_puyop_url(&player_state.field);
+    println!("📋 Puyop URL: {}\r", puyop_url);
     println!("{}\r", "=".repeat(60));
 
     // AIサジェストを事前に取得
