@@ -13,10 +13,58 @@ use ghoti_simulator::haipuyo_detector::*;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent},
-    style::{Color, Print, ResetColor, SetForegroundColor},
+    style::{Color, ResetColor, SetForegroundColor},
     terminal::{self, ClearType},
     ExecutableCommand, QueueableCommand,
 };
+
+// Undo機能のための構造体
+#[derive(Clone)]
+struct GameSnapshot {
+    player_state: PlayerState,
+    score: usize,
+    tumo_index: usize,
+}
+
+struct GameHistory {
+    snapshots: Vec<GameSnapshot>,
+    max_history: usize,
+}
+
+impl GameHistory {
+    fn new(max_history: usize) -> Self {
+        GameHistory {
+            snapshots: Vec::with_capacity(max_history),
+            max_history,
+        }
+    }
+
+    fn push(&mut self, snapshot: GameSnapshot) {
+        if self.snapshots.len() >= self.max_history {
+            self.snapshots.remove(0);
+        }
+        self.snapshots.push(snapshot);
+    }
+
+    fn pop(&mut self) -> Option<GameSnapshot> {
+        self.snapshots.pop()
+    }
+}
+
+// チェインアニメーションのための構造体
+#[derive(Clone, Debug)]
+struct ChainStep {
+    field: CoreField,
+    _chain_number: usize,
+    step_score: usize,
+    description: String,
+}
+
+struct ChainAnimation {
+    steps: Vec<ChainStep>,
+    total_chains: usize,
+    total_score: usize,
+}
 
 fn main() -> Result<(), std::io::Error> {
     // ターミナルをrawモードに設定
@@ -43,6 +91,7 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
     println!("  s/Space   : Hard drop\r");
     println!("  j/k       : Rotate left/right\r");
     println!("  h         : Show AI suggestions\r");
+    println!("  u         : Undo last move\r");
     println!("  q         : Exit game\r");
     println!("\r");
     println!("Press any key to start...\r");
@@ -63,6 +112,9 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
     let mut player_state = PlayerState::initial_state(vec![], Some(seq.clone()));
     let mut score = 0;
     let mut tumo_index = 0;
+
+    // Undo履歴を初期化
+    let mut history = GameHistory::new(50);
 
     loop {
         // ツモを設定
@@ -98,6 +150,18 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
                         event::read()?;
                         continue;
                     }
+                    KeyCode::Char('u') => {
+                        // Undo機能
+                        if let Some(snapshot) = history.pop() {
+                            player_state = snapshot.player_state;
+                            score = snapshot.score;
+                            tumo_index = snapshot.tumo_index;
+                            break; // 内側のループから抜けて即座に再描画
+                        } else {
+                            // 履歴がない場合は何もしない（画面を維持）
+                            continue;
+                        }
+                    }
                     KeyCode::Char('a') => {
                         // 左に移動
                         if x > 1 {
@@ -129,10 +193,33 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
                             continue;
                         }
 
+                        // 現在の状態を履歴に保存
+                        history.push(GameSnapshot {
+                            player_state: player_state.clone(),
+                            score,
+                            tumo_index,
+                        });
+
                         // ぷよを落とす
                         player_state.drop_kumipuyo(&decision);
-                        let rensa_result = player_state.field.simulate();
-                        score += rensa_result.score;
+
+                        // 連鎖アニメーションをチェック
+                        let mut test_field = player_state.field.clone();
+                        let rensa_result = test_field.simulate();
+
+                        if rensa_result.chain > 0 {
+                            // 連鎖が発生する場合、アニメーションを表示
+                            let animation = create_chain_animation(&player_state.field);
+                            display_chain_animation(stdout, &animation)?;
+
+                            // 実際のシミュレーションを適用
+                            player_state.field.simulate();
+                            score += rensa_result.score;
+                        } else {
+                            // 連鎖がない場合は通常通り更新
+                            player_state.field = test_field;
+                            score += rensa_result.score;
+                        }
 
                         // 死んだかチェック
                         if player_state.field.is_dead() {
@@ -169,7 +256,7 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
     }
 }
 
-fn display_game_state(player_state: &PlayerState, score: usize, tumo_index: usize) {
+fn _display_game_state(player_state: &PlayerState, score: usize, tumo_index: usize) {
     println!("\n{}", "=".repeat(40));
     println!("Turn: {}  Score: {}", tumo_index + 1, score);
     println!("{}", "=".repeat(40));
@@ -365,7 +452,7 @@ fn display_field_with_cursor(
     stdout.flush().ok();
 }
 
-fn get_kumipuyo_positions(
+fn _get_kumipuyo_positions(
     field: &CoreField,
     cursor_x: usize,
     rotation: usize,
@@ -465,4 +552,101 @@ fn is_valid_decision(field: &CoreField, kumipuyo: &Kumipuyo, decision: &Decision
     let mut test_field = field.clone();
     test_field.drop_kumipuyo(decision, kumipuyo);
     !test_field.is_dead() || field.is_dead()
+}
+
+// チェインアニメーション関連の関数
+fn create_chain_animation(field: &CoreField) -> ChainAnimation {
+    let mut steps = Vec::new();
+    let mut work_field = field.clone();
+    let mut total_score = 0;
+    let mut chain_num = 0;
+
+    // Step 0: ぷよ設置直後の状態
+    steps.push(ChainStep {
+        field: work_field.clone(),
+        _chain_number: 0,
+        step_score: 0,
+        description: "Puyo dropped - checking for chains...".to_string(),
+    });
+
+    // 連鎖をシミュレート
+    let before_chain = work_field.clone();
+    let result = work_field.simulate();
+
+    if result.chain > 0 {
+        // 連鎖が発生した場合、前後の状態を記録
+        chain_num = result.chain as usize;
+        total_score = result.score;
+
+        // 連鎖消去前の状態（連鎖が起きる直前）
+        steps.push(ChainStep {
+            field: before_chain.clone(),
+            _chain_number: 1,
+            step_score: 0,
+            description: format!("Chain starting... (Total {} chains detected)", chain_num),
+        });
+
+        // 連鎖消去後の最終状態
+        steps.push(ChainStep {
+            field: work_field.clone(),
+            _chain_number: chain_num,
+            step_score: total_score,
+            description: format!("All chains complete! Score: {} pts", total_score),
+        });
+    }
+
+    ChainAnimation {
+        steps,
+        total_chains: chain_num,
+        total_score,
+    }
+}
+
+fn display_chain_animation(
+    stdout: &mut io::Stdout,
+    animation: &ChainAnimation,
+) -> Result<(), std::io::Error> {
+    for (i, step) in animation.steps.iter().enumerate() {
+        stdout.execute(terminal::Clear(ClearType::All))?;
+        stdout.execute(cursor::MoveTo(0, 0))?;
+
+        println!("\r\n{}\r", "=".repeat(40));
+        println!("{}\r", step.description);
+        println!("{}\r", "=".repeat(40));
+
+        display_field(&step.field);
+
+        if step.step_score > 0 {
+            println!("\r\n🎯 Chain Score: {} pts\r", step.step_score);
+        }
+
+        // 最初のステップか最後のステップでない場合は、次へ進む前に待機
+        if i < animation.steps.len() - 1 {
+            println!("\r\nPress any key for next step (q to skip animation)...\r");
+            stdout.flush()?;
+
+            if let Event::Key(KeyEvent { code, .. }) = event::read()? {
+                if code == KeyCode::Char('q') {
+                    // アニメーションをスキップして最終結果を表示
+                    break;
+                }
+            }
+        }
+    }
+
+    // 最終的なサマリーを表示
+    if animation.total_chains > 0 {
+        stdout.execute(terminal::Clear(ClearType::All))?;
+        stdout.execute(cursor::MoveTo(0, 0))?;
+        println!("\r\n{}\r", "=".repeat(40));
+        println!("🎊 Chain Complete!\r");
+        println!("{}\r", "=".repeat(40));
+        println!("Total Chains: {}\r", animation.total_chains);
+        println!("Total Score: {} pts\r", animation.total_score);
+        println!("\r\nPress any key to continue...\r");
+        stdout.flush()?;
+        event::read()?;
+    }
+
+    Ok(())
 }
