@@ -129,8 +129,8 @@ fn run_game(stdout: &mut io::Stdout) -> Result<(), std::io::Error> {
             stdout.execute(terminal::Clear(ClearType::All))?;
             stdout.execute(cursor::MoveTo(0, 0))?;
 
-            // 盤面とカーソル位置を表示
-            display_game_state_with_cursor(&player_state, score, tumo_index, x, r);
+            // 盤面とカーソル位置を表示（AIサジェスト付き）
+            display_game_state_with_cursor_and_suggestions(&ai, &player_state, score, tumo_index, x, r);
             stdout.flush()?;
 
             // キー入力を待つ
@@ -282,19 +282,30 @@ fn _display_game_state(player_state: &PlayerState, score: usize, tumo_index: usi
     }
 }
 
-fn display_game_state_with_cursor(
+
+fn display_game_state_with_cursor_and_suggestions(
+    ai: &BeamSearchAI,
     player_state: &PlayerState,
     score: usize,
     tumo_index: usize,
     cursor_x: usize,
     rotation: usize,
 ) {
-    println!("\r\n{}\r", "=".repeat(40));
+    println!("\r\n{}\r", "=".repeat(60));
     println!("Turn: {}  Score: {}\r", tumo_index + 1, score);
-    println!("{}\r", "=".repeat(40));
+    println!("{}\r", "=".repeat(60));
 
-    // 盤面とカーソル位置を表示
-    display_field_with_cursor(&player_state.field, &player_state.seq[0], cursor_x, rotation);
+    // AIサジェストを事前に取得
+    let suggestions = ai.get_suggestions(player_state.clone());
+
+    // フィールドとAIサジェストを横並びで表示
+    display_field_and_suggestions_side_by_side(
+        &player_state.field,
+        &player_state.seq[0],
+        cursor_x,
+        rotation,
+        &suggestions,
+    );
 
     // 次のツモを表示
     let mut stdout = io::stdout();
@@ -354,23 +365,21 @@ fn display_field(field: &CoreField) {
     stdout.flush().ok();
 }
 
-fn display_field_with_cursor(
+fn display_field_and_suggestions_side_by_side(
     field: &CoreField,
     kumipuyo: &Kumipuyo,
     cursor_x: usize,
     rotation: usize,
+    suggestions: &Vec<(Decision, i32, String)>,
 ) {
     let mut stdout = io::stdout();
 
-    // ツモを最上段（フィールド上部）に表示
-    // 軸ぷよは常に2行目の cursor_x 列に固定
-    // 子ぷよだけが軸ぷよの周りを回転（上、右、下、左）
-
+    // ツモ表示の3行（上部）
     // 1行目（子ぷよが上の時のみ使用）
     print!("\r\n ");
     for x in 1..=6 {
         let show_puyo = if x == cursor_x && rotation == 0 {
-            Some(kumipuyo.child()) // 回転0: 子ぷよが上
+            Some(kumipuyo.child())
         } else {
             None
         };
@@ -385,17 +394,17 @@ fn display_field_with_cursor(
             print!("  ");
         }
     }
-    println!("\r");
+    println!("        🤖 AI Suggestions:\r");
 
     // 2行目（軸ぷよは常にここ、横向きの時は子ぷよも）
     print!(" ");
     for x in 1..=6 {
         let show_puyo = if x == cursor_x {
-            Some(kumipuyo.axis()) // 軸ぷよは常にここ
+            Some(kumipuyo.axis())
         } else if x == cursor_x + 1 && rotation == 1 {
-            Some(kumipuyo.child()) // 回転1: 子ぷよが右
+            Some(kumipuyo.child())
         } else if cursor_x > 1 && x == cursor_x - 1 && rotation == 3 {
-            Some(kumipuyo.child()) // 回転3: 子ぷよが左
+            Some(kumipuyo.child())
         } else {
             None
         };
@@ -410,13 +419,21 @@ fn display_field_with_cursor(
             print!("  ");
         }
     }
-    println!("\r");
+    if !suggestions.is_empty() && suggestions.len() > 0 {
+        let (best_decision, best_eval, _) = &suggestions[0];
+        println!("        1st: Col {} Rot {} (Eval: {})\r",
+                best_decision.axis_x(),
+                best_decision.rot(),
+                best_eval);
+    } else {
+        println!("\r");
+    }
 
     // 3行目（子ぷよが下の時のみ使用）
     print!(" ");
     for x in 1..=6 {
         let show_puyo = if x == cursor_x && rotation == 2 {
-            Some(kumipuyo.child()) // 回転2: 子ぷよが下
+            Some(kumipuyo.child())
         } else {
             None
         };
@@ -431,10 +448,28 @@ fn display_field_with_cursor(
             print!("  ");
         }
     }
-    println!("\r");
+    if suggestions.len() > 1 {
+        let (second_decision, second_eval, _) = &suggestions[1];
+        println!("        2nd: Col {} Rot {} (Eval: {})\r",
+                second_decision.axis_x(),
+                second_decision.rot(),
+                second_eval);
+    } else {
+        println!("\r");
+    }
 
+    // フィールド表示
     println!("  1 2 3 4 5 6  \r");
-    println!(" ┌─────────────┐\r");
+    print!(" ┌─────────────┐");
+    if suggestions.len() > 2 {
+        let (third_decision, third_eval, _) = &suggestions[2];
+        println!("      3rd: Col {} Rot {} (Eval: {})\r",
+                third_decision.axis_x(),
+                third_decision.rot(),
+                third_eval);
+    } else {
+        println!("\r");
+    }
 
     for y in (1..=13).rev() {
         print!(" │");
@@ -446,11 +481,25 @@ fn display_field_with_cursor(
             print!("{} ", color_to_char(color));
             stdout.queue(ResetColor).ok();
         }
-        println!("│\r");
+        print!("│");
+
+        // 4行目以降のAIサジェストを表示
+        let suggestion_index = 13 - y + 3;
+        if suggestion_index < suggestions.len() && suggestion_index <= 5 {
+            let (decision, eval, _) = &suggestions[suggestion_index];
+            println!("      {}th: Col {} Rot {} (Eval: {})\r",
+                    suggestion_index + 1,
+                    decision.axis_x(),
+                    decision.rot(),
+                    eval);
+        } else {
+            println!("\r");
+        }
     }
     println!(" └─────────────┘\r");
     stdout.flush().ok();
 }
+
 
 fn _get_kumipuyo_positions(
     field: &CoreField,
