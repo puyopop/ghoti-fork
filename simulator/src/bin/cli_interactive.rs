@@ -150,6 +150,9 @@ fn run_game(stdout: &mut io::Stdout, initial_url: Option<String>) -> Result<(), 
     // Undo履歴を初期化
     let mut history = GameHistory::new(50);
 
+    // サジェストのキャッシュを初期化
+    let mut suggestions_cache: Option<(usize, Vec<(Decision, i32, String)>)> = None;
+
     loop {
         // ツモを設定
         player_state.set_seq(visible_tumos);
@@ -164,7 +167,7 @@ fn run_game(stdout: &mut io::Stdout, initial_url: Option<String>) -> Result<(), 
             stdout.execute(cursor::MoveTo(0, 0))?;
 
             // 盤面とカーソル位置を表示（AIサジェスト付き）
-            display_game_state_with_cursor_and_suggestions(&ai, &player_state, score, tumo_index, x, r);
+            display_game_state_with_cursor_and_suggestions(&ai, &player_state, score, tumo_index, x, r, &mut suggestions_cache);
             stdout.flush()?;
 
             // キー入力を待つ
@@ -178,7 +181,7 @@ fn run_game(stdout: &mut io::Stdout, initial_url: Option<String>) -> Result<(), 
                         // AIのサジェストを表示
                         stdout.execute(terminal::Clear(ClearType::All))?;
                         stdout.execute(cursor::MoveTo(0, 0))?;
-                        show_ai_suggestions(&ai, &player_state);
+                        show_ai_suggestions(&ai, &player_state, tumo_index, &mut suggestions_cache);
                         println!("\r\nPress any key to continue...\r");
                         stdout.flush()?;
                         event::read()?;
@@ -190,6 +193,8 @@ fn run_game(stdout: &mut io::Stdout, initial_url: Option<String>) -> Result<(), 
                             player_state = snapshot.player_state;
                             score = snapshot.score;
                             tumo_index = snapshot.tumo_index;
+                            // undoした場合はキャッシュをクリア（tumo_indexが変わるため）
+                            suggestions_cache = None;
                             break; // 内側のループから抜けて即座に再描画
                         } else {
                             // 履歴がない場合は何もしない（画面を維持）
@@ -324,6 +329,7 @@ fn display_game_state_with_cursor_and_suggestions(
     tumo_index: usize,
     cursor_x: usize,
     rotation: usize,
+    suggestions_cache: &mut Option<(usize, Vec<(Decision, i32, String)>)>,
 ) {
     println!("\r\n{}\r", "=".repeat(60));
     println!("Turn: {}  Score: {}\r", tumo_index + 1, score);
@@ -335,8 +341,23 @@ fn display_game_state_with_cursor_and_suggestions(
     println!("📋 Puyop URL: {}\r", puyop_url);
     println!("{}\r", "=".repeat(60));
 
-    // AIサジェストを事前に取得
-    let suggestions = ai.get_suggestions(player_state.clone());
+    // AIサジェストをキャッシュから取得または計算
+    let suggestions = if let Some((cached_tumo_index, cached_suggestions)) = suggestions_cache {
+        if *cached_tumo_index == tumo_index {
+            // キャッシュが有効
+            cached_suggestions.clone()
+        } else {
+            // 新しいツモなので再計算
+            let new_suggestions = ai.get_suggestions(player_state.clone());
+            *suggestions_cache = Some((tumo_index, new_suggestions.clone()));
+            new_suggestions
+        }
+    } else {
+        // 初回計算
+        let new_suggestions = ai.get_suggestions(player_state.clone());
+        *suggestions_cache = Some((tumo_index, new_suggestions.clone()));
+        new_suggestions
+    };
 
     // フィールドとAIサジェストを横並びで表示
     display_field_and_suggestions_side_by_side(
@@ -585,11 +606,31 @@ fn puyo_color_to_term_color(color: PuyoColor) -> Option<Color> {
     }
 }
 
-fn show_ai_suggestions(ai: &BeamSearchAI, player_state: &PlayerState) {
+fn show_ai_suggestions(
+    ai: &BeamSearchAI,
+    player_state: &PlayerState,
+    tumo_index: usize,
+    suggestions_cache: &mut Option<(usize, Vec<(Decision, i32, String)>)>,
+) {
     println!("\r\n🤖 AI Beam Search Suggestions:\r");
 
-    // BeamSearchAIで候補手を取得
-    let suggestions = ai.get_suggestions(player_state.clone());
+    // キャッシュから取得または計算
+    let suggestions = if let Some((cached_tumo_index, cached_suggestions)) = suggestions_cache {
+        if *cached_tumo_index == tumo_index {
+            // キャッシュが有効
+            cached_suggestions.clone()
+        } else {
+            // 新しいツモなので再計算
+            let new_suggestions = ai.get_suggestions(player_state.clone());
+            *suggestions_cache = Some((tumo_index, new_suggestions.clone()));
+            new_suggestions
+        }
+    } else {
+        // 初回計算
+        let new_suggestions = ai.get_suggestions(player_state.clone());
+        *suggestions_cache = Some((tumo_index, new_suggestions.clone()));
+        new_suggestions
+    };
 
     if suggestions.is_empty() {
         println!("No valid moves available!\r");

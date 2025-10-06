@@ -69,35 +69,95 @@ impl BeamSearchAI {
         player_state_1p: PlayerState,
     ) -> Vec<(Decision, i32, String)> {
         let depth = 20;
-        let width = 20;
+        let width = 200;
 
         let cf = &player_state_1p.field;
         let seq = &player_state_1p.seq;
 
-        let mut state_v: Vec<State> = vec![State::from_field(cf)];
+        // ツモを伸ばす（必要に応じてランダムツモを生成）
+        let visible_tumos = seq.len();
+        let seq: Vec<Kumipuyo> = seq
+            .iter()
+            .cloned()
+            .chain(generate_random_puyocolor_sequence(
+                if depth > visible_tumos {
+                    depth - visible_tumos
+                } else {
+                    0
+                },
+            ))
+            .collect();
 
-        // 1手目だけ展開
-        let mut next_state_v: Vec<State> =
-            Vec::with_capacity(width * Decision::all_valid_decisions().len());
-        for cur_state in &state_v {
-            generate_next_states(
-                &cur_state,
-                &mut next_state_v,
-                &mut vec![],
-                &seq[0],
-                false,
-                &self.evaluator,
-            );
+        let mut state_v: Vec<State> = vec![State::from_field(cf)];
+        let mut fired_v: Vec<State> =
+            Vec::with_capacity(width * Decision::all_valid_decisions().len() * depth);
+
+        // ビームサーチを実行
+        for cur_depth in 0..depth.min(seq.len()) {
+            // 次の状態を列挙
+            let mut next_state_v: Vec<State> =
+                Vec::with_capacity(width * Decision::all_valid_decisions().len());
+            for cur_state in &state_v {
+                generate_next_states(
+                    &cur_state,
+                    &mut next_state_v,
+                    &mut fired_v,
+                    &seq[cur_depth],
+                    cur_depth < visible_tumos,
+                    &self.evaluator,
+                );
+            }
+            if next_state_v.is_empty() {
+                break;
+            }
+
+            // 良い方からビーム幅分だけ残す
+            next_state_v
+                .sort_by(|a: &State, b: &State| (-a.eval_score).partial_cmp(&-b.eval_score).unwrap());
+            if next_state_v.len() > width {
+                next_state_v.resize(width, State::empty());
+            }
+            state_v = next_state_v;
         }
 
-        // 評価値でソート
-        next_state_v
-            .sort_by(|a: &State, b: &State| (-a.eval_score).partial_cmp(&-b.eval_score).unwrap());
+        // 1手目の決定ごとに最良の評価値を集計
+        // Decision を (x, r) のタプルとして扱う
+        let mut best_states: std::collections::HashMap<(usize, usize), State> = std::collections::HashMap::new();
 
-        // 候補手を返す
-        next_state_v
-            .iter()
-            .filter_map(|state| {
+        // ビームサーチで得られた最終状態から、1手目の決定ごとに最良のものを選択
+        for state in state_v.iter() {
+            if let Some(first_dec) = state.first_decision() {
+                let key = (first_dec.axis_x(), first_dec.rot());
+                best_states.entry(key)
+                    .and_modify(|existing| {
+                        if state.eval_score > existing.eval_score {
+                            *existing = state.clone();
+                        }
+                    })
+                    .or_insert_with(|| state.clone());
+            }
+        }
+
+        // 発火可能な手も考慮
+        for state in fired_v.iter() {
+            if let Some(first_dec) = state.first_decision() {
+                // 連鎖の評価値を考慮（連鎖は高く評価）
+                let fire_eval = state.eval_score + 10000; // 連鎖にボーナスを付与
+                let key = (first_dec.axis_x(), first_dec.rot());
+                best_states.entry(key)
+                    .and_modify(|existing| {
+                        if fire_eval > existing.eval_score {
+                            *existing = state.clone();
+                        }
+                    })
+                    .or_insert_with(|| state.clone());
+            }
+        }
+
+        // 候補手を評価値順にソートして返す
+        let mut suggestions: Vec<(Decision, i32, String)> = best_states
+            .into_iter()
+            .filter_map(|(_, state)| {
                 state.first_decision().map(|decision| {
                     let chain_info = if let Some(plan) = &state.plan {
                         if plan.chain() > 0 {
@@ -111,7 +171,12 @@ impl BeamSearchAI {
                     (decision.clone(), state.eval_score, chain_info)
                 })
             })
-            .collect()
+            .collect();
+
+        // 評価値でソート（降順）
+        suggestions.sort_by(|a, b| b.1.cmp(&a.1));
+
+        suggestions
     }
 
     fn think_internal(
