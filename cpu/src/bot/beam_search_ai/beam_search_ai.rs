@@ -63,6 +63,57 @@ impl AI for BeamSearchAI {
 }
 
 impl BeamSearchAI {
+    /// ビームサーチの結果から候補手と評価値のリストを返す（サジェスト用）
+    pub fn get_suggestions(
+        &self,
+        player_state_1p: PlayerState,
+    ) -> Vec<(Decision, i32, String)> {
+        let depth = 20;
+        let width = 20;
+
+        let cf = &player_state_1p.field;
+        let seq = &player_state_1p.seq;
+
+        let mut state_v: Vec<State> = vec![State::from_field(cf)];
+
+        // 1手目だけ展開
+        let mut next_state_v: Vec<State> =
+            Vec::with_capacity(width * Decision::all_valid_decisions().len());
+        for cur_state in &state_v {
+            generate_next_states(
+                &cur_state,
+                &mut next_state_v,
+                &mut vec![],
+                &seq[0],
+                false,
+                &self.evaluator,
+            );
+        }
+
+        // 評価値でソート
+        next_state_v
+            .sort_by(|a: &State, b: &State| (-a.eval_score).partial_cmp(&-b.eval_score).unwrap());
+
+        // 候補手を返す
+        next_state_v
+            .iter()
+            .filter_map(|state| {
+                state.first_decision().map(|decision| {
+                    let chain_info = if let Some(plan) = &state.plan {
+                        if plan.chain() > 0 {
+                            format!("{}連鎖 ({}点)", plan.chain(), plan.score())
+                        } else {
+                            "".to_string()
+                        }
+                    } else {
+                        "".to_string()
+                    };
+                    (decision.clone(), state.eval_score, chain_info)
+                })
+            })
+            .collect()
+    }
+
     fn think_internal(
         &self,
         player_state_1p: PlayerState,
