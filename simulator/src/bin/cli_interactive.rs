@@ -332,7 +332,17 @@ fn display_game_state_with_cursor_and_suggestions(
     suggestions_cache: &mut Option<(usize, Vec<(Decision, i32, String)>)>,
 ) {
     println!("\r\n{}\r", "=".repeat(60));
-    println!("Turn: {}  Score: {}\r", tumo_index + 1, score);
+
+    // 現在の手でゲームオーバーになるかチェック
+    let decision = Decision::new(cursor_x, rotation);
+    let will_die = will_die_after_drop(&player_state.field, &player_state.seq[0], &decision);
+
+    if will_die {
+        println!("Turn: {}  Score: {}  ⚠️  GAME OVER if placed here!\r", tumo_index + 1, score);
+    } else {
+        println!("Turn: {}  Score: {}\r", tumo_index + 1, score);
+    }
+
     println!("{}\r", "=".repeat(60));
 
     // 現在の盤面のpuyop.com URLを生成
@@ -681,7 +691,20 @@ fn rotation_description(rot: usize) -> &'static str {
 fn is_valid_decision(field: &CoreField, kumipuyo: &Kumipuyo, decision: &Decision) -> bool {
     let mut test_field = field.clone();
     test_field.drop_kumipuyo(decision, kumipuyo);
+
+    // 連鎖のシミュレーションを実行
+    test_field.simulate();
+
+    // 連鎖後も含めて死んでいなければOK
     !test_field.is_dead() || field.is_dead()
+}
+
+// 置いた後（連鎖前）にゲームオーバーになるかチェック
+fn will_die_after_drop(field: &CoreField, kumipuyo: &Kumipuyo, decision: &Decision) -> bool {
+    let mut test_field = field.clone();
+    test_field.drop_kumipuyo(decision, kumipuyo);
+    // 連鎖前の状態で死ぬかどうか
+    test_field.is_dead()
 }
 
 // チェインアニメーション関連の関数
