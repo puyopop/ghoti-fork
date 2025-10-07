@@ -8,6 +8,7 @@ use itertools::Itertools;
 use puyoai::{color::Color, decision::Decision, field, field::CoreField, kumipuyo::Kumipuyo};
 use serde::Deserialize;
 
+#[derive(Clone)]
 pub struct OpeningMatcher {
     _name: String,
     opener: Opener,
@@ -145,7 +146,7 @@ fn field_to_abcd(map: &HashMap<char, char>, field: &CoreField) -> String {
     s
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Opener {
     visible_tumos: usize,
     // TODO: serde_def::DecisionDef を使う

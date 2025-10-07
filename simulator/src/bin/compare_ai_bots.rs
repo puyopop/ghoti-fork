@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use cpu::bot::{BeamSearchAI, ChainFocusedAI, HybridAI, RandomAI, StableAI, AI};
+use cpu::bot::{BeamSearchAI, ChainFocusedAI, ChainPotentialAI, HybridAI, RandomAI, StableAI, AI};
 use ghoti_simulator::simulate_1p::simulate_1p;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use logger::Logger;
@@ -34,8 +34,8 @@ struct Args {
     #[clap(long, default_value = "20000")]
     required_chain_score: usize,
 
-    /// 比較するAI（カンマ区切り: BeamSearch,ChainFocused,Stable,Hybrid,Random）
-    #[clap(long, default_value = "BeamSearch,ChainFocused,Stable,Hybrid")]
+    /// 比較するAI（カンマ区切り: BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid,Random）
+    #[clap(long, default_value = "BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid")]
     ai_types: String,
 
     /// 結果をJSONファイルに出力
@@ -56,6 +56,7 @@ struct Args {
 enum AIType {
     BeamSearch,
     ChainFocused,
+    ChainPotential,
     Stable,
     Hybrid,
     Random,
@@ -66,6 +67,7 @@ impl AIType {
         match s.to_lowercase().as_str() {
             "beamsearch" | "beam" => Some(AIType::BeamSearch),
             "chainfocused" | "chain" => Some(AIType::ChainFocused),
+            "chainpotential" | "potential" => Some(AIType::ChainPotential),
             "stable" => Some(AIType::Stable),
             "hybrid" => Some(AIType::Hybrid),
             "random" => Some(AIType::Random),
@@ -77,6 +79,7 @@ impl AIType {
         match self {
             AIType::BeamSearch => "BeamSearchAI",
             AIType::ChainFocused => "ChainFocusedAI",
+            AIType::ChainPotential => "ChainPotentialAI",
             AIType::Stable => "StableAI",
             AIType::Hybrid => "HybridAI",
             AIType::Random => "RandomAI",
@@ -87,6 +90,7 @@ impl AIType {
         match self {
             AIType::BeamSearch => Box::new(BeamSearchAI::new()),
             AIType::ChainFocused => Box::new(ChainFocusedAI::new()),
+            AIType::ChainPotential => Box::new(ChainPotentialAI::new()),
             AIType::Stable => Box::new(StableAI::new()),
             AIType::Hybrid => Box::new(HybridAI::new()),
             AIType::Random => Box::new(RandomAI::new()),
