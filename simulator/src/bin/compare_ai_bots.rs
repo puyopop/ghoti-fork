@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use cpu::bot::{BeamSearchAI, ChainFocusedAI, ChainPotentialAI, HybridAI, RandomAI, StableAI, AI};
+use cpu::bot::{BeamSearchAI, ChainFocusedAI, ChainPotentialAI, HybridAI, RandomAI, StableAI, TakaptAI, AI};
 use ghoti_simulator::simulate_1p::simulate_1p;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use logger::Logger;
@@ -34,8 +34,8 @@ struct Args {
     #[clap(long, default_value = "20000")]
     required_chain_score: usize,
 
-    /// 比較するAI（カンマ区切り: BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid,Random）
-    #[clap(long, default_value = "BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid")]
+    /// 比較するAI（カンマ区切り: BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid,Takapt,Random）
+    #[clap(long, default_value = "BeamSearch,ChainFocused,ChainPotential,Stable,Hybrid,Takapt")]
     ai_types: String,
 
     /// 結果をJSONファイルに出力
@@ -59,6 +59,7 @@ enum AIType {
     ChainPotential,
     Stable,
     Hybrid,
+    Takapt,
     Random,
 }
 
@@ -70,6 +71,7 @@ impl AIType {
             "chainpotential" | "potential" => Some(AIType::ChainPotential),
             "stable" => Some(AIType::Stable),
             "hybrid" => Some(AIType::Hybrid),
+            "takapt" => Some(AIType::Takapt),
             "random" => Some(AIType::Random),
             _ => None,
         }
@@ -82,6 +84,7 @@ impl AIType {
             AIType::ChainPotential => "ChainPotentialAI",
             AIType::Stable => "StableAI",
             AIType::Hybrid => "HybridAI",
+            AIType::Takapt => "TakaptAI",
             AIType::Random => "RandomAI",
         }
     }
@@ -93,6 +96,7 @@ impl AIType {
             AIType::ChainPotential => Box::new(ChainPotentialAI::new()),
             AIType::Stable => Box::new(StableAI::new()),
             AIType::Hybrid => Box::new(HybridAI::new()),
+            AIType::Takapt => Box::new(TakaptAI::new()),
             AIType::Random => Box::new(RandomAI::new()),
         }
     }

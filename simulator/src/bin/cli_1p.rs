@@ -1,5 +1,5 @@
 use clap::Parser;
-use cpu::bot::{BeamSearchAI, RandomAI, AI};
+use cpu::bot::{BeamSearchAI, RandomAI, TakaptAI, AI};
 use ghoti_simulator::simulate_1p;
 use logger::*;
 
@@ -43,7 +43,11 @@ struct Opts {
 fn main() -> Result<(), std::io::Error> {
     let opts = Opts::parse();
 
-    let ais: Vec<Box<dyn AI>> = vec![Box::new(BeamSearchAI::new()), Box::new(RandomAI::new())];
+    let ais: Vec<Box<dyn AI>> = vec![
+        Box::new(BeamSearchAI::new()),
+        Box::new(RandomAI::new()),
+        Box::new(TakaptAI::new()),
+    ];
     let ai = ais
         .iter()
         .find(|&ai| ai.name() == opts.ai)
