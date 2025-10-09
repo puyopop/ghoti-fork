@@ -189,6 +189,7 @@ struct GameResult {
     time_ms: u128,
     max_chain: usize,
     seed: u32,
+    puyop_url: String,
 }
 
 // 簡易的なLogger実装
@@ -226,7 +227,7 @@ fn run_single_game(
 
     let time_ms = start.elapsed().as_millis();
 
-    let (score, moves, max_chain) = match result {
+    let (score, moves, max_chain, puyop_url) = match result {
         Ok(r) => {
             // 最大連鎖を推定（log_outputから）
             let max_chain = r
@@ -238,9 +239,10 @@ fn run_single_game(
                 })
                 .max()
                 .unwrap_or(0);
-            (r.score, r.json_decisions.len(), max_chain)
+
+            (r.score, r.json_decisions.len(), max_chain, r.url)
         }
-        Err(_) => (0, 0, 0),
+        Err(_) => (0, 0, 0, String::new()),
     };
 
     GameResult {
@@ -249,6 +251,7 @@ fn run_single_game(
         time_ms,
         max_chain,
         seed,
+        puyop_url,
     }
 }
 
@@ -471,6 +474,20 @@ fn main() -> Result<()> {
             );
             println!("    Max Score: {}", stats.max_score);
             println!("    Success Rate: {:.1}%", stats.success_rate);
+
+            // 各試行のURLを表示
+            println!("\n    Trial URLs:");
+            for (idx, result) in results.iter().enumerate() {
+                if !result.puyop_url.is_empty() {
+                    println!(
+                        "      #{:2} (score: {:6}, seed: {:4}): {}",
+                        idx + 1,
+                        result.score,
+                        result.seed,
+                        result.puyop_url
+                    );
+                }
+            }
         }
 
         all_stats.push(stats);

@@ -20,7 +20,7 @@ pub fn simulate_1p(
     ai: &Box<dyn AI>,
     visible_tumos: usize,
     max_tumos: usize,
-    haipuyo_margin: Option<usize>, // Noneならランダムに、Someならその番号の配ぷよを使う
+    haipuyo_margin: Option<usize>, // Noneならランダムに、Someならseed値
     required_chain_score: Option<usize>, // この得点以上の連鎖が打たれたら終了
 ) -> Result<SimulateResult1P, std::io::Error> {
     logger.print(format!("> AI: {} ({:3}手読み)\n", ai.name(), visible_tumos))?;
@@ -28,7 +28,7 @@ pub fn simulate_1p(
     // TODO: フレームを更新する
     let seq = match haipuyo_margin {
         None => HaipuyoDetector::random_haipuyo(),
-        Some(margin) => HaipuyoDetector::retrieve_haipuyo(margin % TUMO_PATTERN),
+        Some(margin) => HaipuyoDetector::random_haipuyo_with_seed(margin as u64),
     };
     let mut player_state = PlayerState::initial_state(vec![], Some(seq.clone()));
 
@@ -99,7 +99,7 @@ pub struct SimulateResult1P {
     visible_tumos: usize,
     tumos: Vec<String>, // ["RR", "YG", ...]
     pub json_decisions: Vec<JsonDecision>,
-    url: String,
+    pub url: String,
 }
 
 impl SimulateResult1P {

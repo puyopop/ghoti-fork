@@ -5,7 +5,8 @@ use puyoai::{
     color::{Color, PuyoColor},
     kumipuyo::Kumipuyo,
 };
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 
 use super::haipuyo;
 
@@ -88,6 +89,13 @@ impl HaipuyoDetector {
 
     pub fn random_haipuyo() -> Vec<Kumipuyo> {
         let key = rand::thread_rng().gen_range(0..TUMO_PATTERN);
+
+        HaipuyoDetector::retrieve_haipuyo(key)
+    }
+
+    pub fn random_haipuyo_with_seed(seed: u64) -> Vec<Kumipuyo> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let key = rng.gen_range(0..TUMO_PATTERN);
 
         HaipuyoDetector::retrieve_haipuyo(key)
     }
