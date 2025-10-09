@@ -4,6 +4,7 @@ use puyoai::{
     color::{Color, PuyoColor},
     column_puyo_list::ColumnPuyoList,
     decision::Decision,
+    es_field::EsCoreField,
     field::CoreField,
     kumipuyo::{kumipuyo_seq::generate_random_puyocolor_sequence, Kumipuyo},
     plan::Plan,
@@ -214,15 +215,18 @@ impl State {
 /// Evaluate a game state based on takapt's original evaluation function
 fn evaluate_state(plan: &Plan, _base_field: &CoreField) -> f64 {
     let field = plan.field();
-    let max_chains = plan.chain();
+    let actual_chain = plan.chain();
     let chain_score = plan.score();
 
     let mut score = 0.0;
 
     // If a chain was fired, use the chain score directly as the primary score
-    if max_chains > 0 {
+    if actual_chain > 0 {
         score = chain_score as f64;
     }
+
+    // Use RensaDetector to find potential chains (complementing with 2-13 puyos)
+    let (max_chains, highest_ignition_y) = detect_potential_chains(field);
 
     // 1. Chain bonus: chains >= 2 get additional bonus: max_chains * 1000
     if max_chains >= 2 {
@@ -248,8 +252,7 @@ fn evaluate_state(plan: &Plan, _base_field: &CoreField) -> f64 {
     score += 60.0 * u_score;
 
     // 4. Ignition height bonus: score += 10 * (highest_ignition_y - ave_height)
-    // Find the highest ignition point (where a chain can be triggered)
-    let highest_ignition_y = find_highest_ignition_point(field);
+    // highest_ignition_y comes from RensaDetector
     score += 10.0 * (highest_ignition_y - ave_height);
 
     // 5. Penalty for columns reaching row 13 (top row)
@@ -264,32 +267,48 @@ fn evaluate_state(plan: &Plan, _base_field: &CoreField) -> f64 {
     score
 }
 
-/// Find the highest Y coordinate where a chain can be ignited
-fn find_highest_ignition_point(field: &CoreField) -> f64 {
-    let mut highest_y = 0.0;
+/// Detect potential chains using RensaDetector-like algorithm
+/// Returns (max_chains, highest_ignition_y)
+fn detect_potential_chains(field: &CoreField) -> (usize, f64) {
+    let mut max_chains = 0;
+    let mut highest_ignition_y = 0;
 
-    // Look for groups of 3+ connected puyos (potential ignition points)
-    let mut visited = [[false; 14]; 8];
+    // Use detect_by_drop to find potential chains by complementing with 2-13 puyos
+    let prohibits = [false; 8]; // No column restrictions
 
-    for x in 1..=6 {
-        for y in 1..=field.height(x) {
-            let color = field.color(x, y as usize);
-            if !color.is_normal_color() || visited[x][y as usize] {
-                continue;
-            }
-
-            let group_size = count_connected(field, x, y as usize, color, &mut visited);
-
-            // Groups of 3+ can trigger chains
-            if group_size >= 3 {
-                if y as f64 > highest_y {
-                    highest_y = y as f64;
+    let callback = |mut complemented_field: CoreField, cpl: &ColumnPuyoList| {
+        // Find the ignition point (highest column where puyos were added)
+        let mut ignition_y = 0;
+        for x in 1..=6 {
+            if cpl.size_on(x) > 0 {
+                let h = complemented_field.height(x);
+                if h > ignition_y {
+                    ignition_y = h;
                 }
             }
         }
-    }
 
-    highest_y
+        // Simulate the chain
+        let rensa_result = complemented_field.es_simulate();
+
+        // Update max_chains and highest_ignition_y
+        if (rensa_result.chain, ignition_y) > (max_chains, highest_ignition_y) {
+            max_chains = rensa_result.chain;
+            highest_ignition_y = ignition_y;
+        }
+    };
+
+    // Detect potential chains by complementing with 2-13 puyos
+    detect_by_drop(
+        field,
+        &prohibits,
+        PurposeForFindingRensa::ForFire,
+        2,  // min puyos to complement
+        13, // max puyos to complement
+        callback,
+    );
+
+    (max_chains, highest_ignition_y as f64)
 }
 
 
