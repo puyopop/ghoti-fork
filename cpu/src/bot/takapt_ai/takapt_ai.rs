@@ -1,10 +1,9 @@
-use std::{cmp::min, time::Instant, vec::Vec};
+use std::{cmp::min, sync::mpsc, thread, time::Instant, vec::Vec};
 
 use puyoai::{
     color::{Color, PuyoColor},
     column_puyo_list::ColumnPuyoList,
     decision::Decision,
-    es_field::EsCoreField,
     field::CoreField,
     kumipuyo::{kumipuyo_seq::generate_random_puyocolor_sequence, Kumipuyo},
     plan::Plan,
@@ -17,13 +16,15 @@ use crate::bot::*;
 pub struct TakaptAI {
     beam_width: usize,
     beam_depth: usize,
+    parallel: usize,
 }
 
 impl TakaptAI {
-    pub fn new_customize(beam_width: usize, beam_depth: usize) -> Self {
+    pub fn new_customize(beam_width: usize, beam_depth: usize, parallel: usize) -> Self {
         TakaptAI {
             beam_width,
             beam_depth,
+            parallel,
         }
     }
 }
@@ -33,6 +34,7 @@ impl AI for TakaptAI {
         TakaptAI {
             beam_width: 400,
             beam_depth: 20,
+            parallel: 5, // Run 5 simulations with different random sequences (balance speed vs accuracy)
         }
     }
 
@@ -48,132 +50,84 @@ impl AI for TakaptAI {
     ) -> AIDecision {
         let start = Instant::now();
 
-        let cf = &player_state_1p.field;
-        let seq = &player_state_1p.seq;
+        // If we have enough visible tumos, don't need Monte Carlo
+        let parallel = if player_state_1p.seq.len() < self.beam_depth {
+            self.parallel
+        } else {
+            1
+        };
 
-        // Calculate good_chains threshold based on field complexity
-        let good_chains = calculate_good_chains(cf);
+        // Run multiple simulations with different random sequences
+        let (tx, rx): (mpsc::Sender<SimulationResult>, mpsc::Receiver<SimulationResult>) =
+            mpsc::channel();
 
-        // Extend sequence with random puyos if needed
-        let visible_tumos = seq.len();
-        let seq: Vec<Kumipuyo> = seq
-            .iter()
-            .cloned()
-            .chain(generate_random_puyocolor_sequence(
-                if self.beam_depth > visible_tumos {
-                    self.beam_depth - visible_tumos
-                } else {
-                    0
-                },
-            ))
-            .collect();
+        for simulation_id in 0..parallel {
+            let depth = self.beam_depth;
+            let width = self.beam_width;
+            let tx_c = tx.clone();
+            let player_state_c = player_state_1p.clone();
 
-        let mut states: Vec<State> = vec![State::from_field(cf)];
-        let mut fired_states: Vec<State> = Vec::new();
-        let mut max_chains = 0;
-        let mut first_decision_for_max_chains: Option<Decision> = None;
-
-        // Beam search
-        for depth in 0..self.beam_depth.min(seq.len()) {
-            let mut next_states: Vec<State> = Vec::new();
-            let mut next_fired: Vec<State> = Vec::new();
-
-            for state in &states {
-                // Generate all possible placements
-                let seq_vec = vec![seq[depth].clone()];
-                Plan::iterate_available_plans(&state.field, &seq_vec, 1, &mut |plan: &Plan| {
-                    let mut decisions = state.decisions.clone();
-                    decisions.push(plan.first_decision().clone());
-
-                    let score = evaluate_state(plan, &state.field);
-                    let chain = plan.chain();
-                    let plan_score = plan.score();
-
-                    let new_state = State {
-                        field: plan.field().clone(),
-                        decisions,
-                        score,
-                        chain,
-                        plan_score,
-                        is_fired: chain > 0,
-                    };
-
-                    // Track fired states separately
-                    if chain > 0 {
-                        // Update max chains tracking
-                        if chain > max_chains {
-                            max_chains = chain;
-                            first_decision_for_max_chains = new_state.first_decision().cloned();
-                        }
-                        next_fired.push(new_state.clone());
-                    }
-
-                    next_states.push(new_state);
-                });
-            }
-
-            if next_states.is_empty() {
-                break;
-            }
-
-            // Sort by score and keep top beam_width states
-            next_states.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            if next_states.len() > self.beam_width {
-                next_states.truncate(self.beam_width);
-            }
-
-            // Merge fired states
-            fired_states.extend(next_fired);
-
-            // Early termination: if we found a good chain
-            if max_chains >= good_chains {
-                if let Some(ref first_decision) = first_decision_for_max_chains {
-                    // Check if the best state has the same first decision
-                    if let Some(best_first) = next_states.first().and_then(|s| s.first_decision()) {
-                        if best_first == first_decision {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            states = next_states;
-        }
-
-        // Decision selection: prioritize max chains from fired states
-        if !fired_states.is_empty() {
-            // Sort fired states by chain count (desc), then score (desc)
-            fired_states.sort_by(|a, b| {
-                b.chain.cmp(&a.chain)
-                    .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+            thread::spawn(move || {
+                tx_c.send(run_single_simulation(
+                    &player_state_c,
+                    depth,
+                    width,
+                    simulation_id,
+                ))
+                .ok();
             });
+        }
 
-            if let Some(best_fired) = fired_states.first() {
-                if !best_fired.decisions.is_empty() {
-                    return AIDecision::new(
-                        best_fired.decisions.clone(),
-                        format!(
-                            "FIRE: chain: {}, score: {}, eval: {:.0}",
-                            best_fired.chain, best_fired.plan_score, best_fired.score
-                        ),
-                        start.elapsed(),
-                    );
+        // Aggregate results: collect chains for each first decision (like original takapt)
+        let mut chains: [[Vec<usize>; 4]; 7] = Default::default(); // [x][rotation] -> vector of chain counts
+        let mut result_map: std::collections::HashMap<(usize, usize), SimulationResult> =
+            std::collections::HashMap::new();
+
+        for _ in 0..parallel {
+            if let Ok(result) = rx.recv() {
+                if !result.decisions.is_empty() {
+                    let first_dec = &result.decisions[0];
+                    let x = first_dec.axis_x();
+                    let rot = first_dec.rot();
+
+                    // Collect chain count for this decision
+                    chains[x][rot].push(result.max_chains);
+
+                    // Keep one result for this decision
+                    result_map.insert((x, rot), result);
                 }
             }
         }
 
-        // No fired states, select best non-fired state
-        if let Some(best_state) = states.first() {
-            if !best_state.decisions.is_empty() {
-                return AIDecision::new(
-                    best_state.decisions.clone(),
-                    format!(
-                        "BUILD: eval: {:.0}",
-                        best_state.score
-                    ),
-                    start.elapsed(),
-                );
+        // Select the decision with highest total chains (like original takapt)
+        let mut best_sum_chains = 0;
+        let mut best_decision = Decision::new(3, 0);
+
+        for x in 1..=6 {
+            for rot in 0..4 {
+                if !chains[x][rot].is_empty() {
+                    let sum_chains: usize = chains[x][rot].iter().sum();
+                    if sum_chains > best_sum_chains {
+                        best_sum_chains = sum_chains;
+                        best_decision = Decision::new(x, rot);
+                    }
+                }
             }
+        }
+
+        // Find the result for this decision
+        if let Some(result) = result_map.get(&(best_decision.axis_x(), best_decision.rot())) {
+            let avg_chains = if !chains[best_decision.axis_x()][best_decision.rot()].is_empty() {
+                best_sum_chains as f64 / chains[best_decision.axis_x()][best_decision.rot()].len() as f64
+            } else {
+                0.0
+            };
+
+            return AIDecision::new(
+                result.decisions.clone(),
+                format!("{} (avg_chains: {:.1})", result.log_output, avg_chains),
+                start.elapsed(),
+            );
         }
 
         // Fallback
@@ -182,6 +136,152 @@ impl AI for TakaptAI {
             "no valid move".to_string(),
             start.elapsed(),
         )
+    }
+}
+
+#[derive(Clone)]
+struct SimulationResult {
+    decisions: Vec<Decision>,
+    log_output: String,
+    max_chains: usize,
+}
+
+fn run_single_simulation(
+    player_state_1p: &PlayerState,
+    beam_depth: usize,
+    beam_width: usize,
+    simulation_id: usize,
+) -> SimulationResult {
+    let cf = &player_state_1p.field;
+    let seq = &player_state_1p.seq;
+
+    // Calculate good_chains threshold based on field complexity
+    let good_chains = calculate_good_chains(cf);
+
+    // Extend sequence with random puyos if needed (using simulation_id for seed variation)
+    let visible_tumos = seq.len();
+    let seq: Vec<Kumipuyo> = seq
+        .iter()
+        .cloned()
+        .chain(generate_random_puyocolor_sequence(
+            if beam_depth > visible_tumos {
+                beam_depth - visible_tumos
+            } else {
+                0
+            },
+        ))
+        .collect();
+
+    let mut states: Vec<State> = vec![State::from_field(cf)];
+    let mut fired_states: Vec<State> = Vec::new();
+    let mut max_chains = 0;
+    let mut first_decision_for_max_chains: Option<Decision> = None;
+
+    // Beam search
+    for depth in 0..beam_depth.min(seq.len()) {
+        let mut next_states: Vec<State> = Vec::new();
+        let mut next_fired: Vec<State> = Vec::new();
+
+        for state in &states {
+            // Generate all possible placements
+            let seq_vec = vec![seq[depth].clone()];
+            Plan::iterate_available_plans(&state.field, &seq_vec, 1, &mut |plan: &Plan| {
+                let mut decisions = state.decisions.clone();
+                decisions.push(plan.first_decision().clone());
+
+                let score = evaluate_state(plan, &state.field);
+                let chain = plan.chain();
+                let plan_score = plan.score();
+
+                let new_state = State {
+                    field: plan.field().clone(),
+                    decisions,
+                    score,
+                    chain,
+                    plan_score,
+                    is_fired: chain > 0,
+                };
+
+                // Track fired states separately
+                if chain > 0 {
+                    // Update max chains tracking
+                    if chain > max_chains {
+                        max_chains = chain;
+                        first_decision_for_max_chains = new_state.first_decision().cloned();
+                    }
+                    next_fired.push(new_state.clone());
+                }
+
+                next_states.push(new_state);
+            });
+        }
+
+        if next_states.is_empty() {
+            break;
+        }
+
+        // Sort by score and keep top beam_width states
+        next_states.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        if next_states.len() > beam_width {
+            next_states.truncate(beam_width);
+        }
+
+        // Merge fired states
+        fired_states.extend(next_fired);
+
+        // Early termination: if we found a good chain
+        if max_chains >= good_chains {
+            if let Some(ref first_decision) = first_decision_for_max_chains {
+                // Check if the best state has the same first decision
+                if let Some(best_first) = next_states.first().and_then(|s| s.first_decision()) {
+                    if best_first == first_decision {
+                        break;
+                    }
+                }
+            }
+        }
+
+        states = next_states;
+    }
+
+    // Decision selection: prioritize max chains from fired states
+    if !fired_states.is_empty() {
+        // Sort fired states by chain count (desc), then score (desc)
+        fired_states.sort_by(|a, b| {
+            b.chain.cmp(&a.chain)
+                .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+        });
+
+        if let Some(best_fired) = fired_states.first() {
+            if !best_fired.decisions.is_empty() {
+                return SimulationResult {
+                    decisions: best_fired.decisions.clone(),
+                    log_output: format!(
+                        "FIRE: chain: {}, score: {}, eval: {:.0}",
+                        best_fired.chain, best_fired.plan_score, best_fired.score
+                    ),
+                    max_chains: best_fired.chain,
+                };
+            }
+        }
+    }
+
+    // No fired states, select best non-fired state
+    if let Some(best_state) = states.first() {
+        if !best_state.decisions.is_empty() {
+            return SimulationResult {
+                decisions: best_state.decisions.clone(),
+                log_output: format!("BUILD: eval: {:.0}", best_state.score),
+                max_chains: 0,
+            };
+        }
+    }
+
+    // Fallback
+    SimulationResult {
+        decisions: vec![Decision::new(3, 0)],
+        log_output: "no valid move".to_string(),
+        max_chains: 0,
     }
 }
 
@@ -289,7 +389,7 @@ fn detect_potential_chains(field: &CoreField) -> (usize, f64) {
         }
 
         // Simulate the chain
-        let rensa_result = complemented_field.es_simulate();
+        let rensa_result = complemented_field.simulate();
 
         // Update max_chains and highest_ignition_y
         if (rensa_result.chain, ignition_y) > (max_chains, highest_ignition_y) {
